@@ -1,0 +1,158 @@
+---
+title: "NLP Net"
+author: "Francisco José Caride"
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(openxlsx)
+library(tm)
+library(stringr)
+library(visNetwork)
+library(stringi)
+library(igraph)
+library(Rcpp)
+library(dplyr)
+library(readxl)
+
+df = read.csv('.../df_politica.csv')
+
+tx = df
+
+tx$text = tolower(tx$text)
+tx$text = str_replace_all(tx$text, "[^[:alnum:][:space:]]", " ")
+tx$text = str_replace_all(tx$text, "[[:digit:]]+", " ")
+tx$text = str_replace_all(tx$text, regex(" (por que|que|com|dar|por|ser|los|del|https) ", ignore_case = T), " ")
+
+```
+
+
+
+```{r}
+umbral_conexiones = 0.3
+freq_terminos = 1000
+```
+
+```{r}
+
+corpus <- Corpus(VectorSource(tx$text))
+corpus <- tm_map(corpus, removeWords, stopwords("spanish"))
+terms <-DocumentTermMatrix(corpus,control = list(weighting = function(x) weightTfIdf(x, normalize = FALSE)))
+
+# Limitemos las palabras
+#p3 = findFreqTerms(terms, freq_terminos)
+#terms2 <-DocumentTermMatrix(corpus, control = list(weighting = function(x) weightTfIdf(x, normalize = FALSE),
+#                                                   dictionary = p3))
+```
+
+```{r}
+
+terms
+```
+
+
+```{r}
+nodos = as.data.frame(colSums(as.matrix(terms)))
+colnames(nodos) = "weight"
+nodos$palabra = rownames(nodos)
+rownames(nodos) = NULL
+nodos
+```
+
+```{r}
+adj = as.matrix(terms) #Matriz
+adj = t(adj)%*%adj #La multipñlico por su transpuesta para ver relaciones enter palabras
+adj = adj-diag(diag(adj)) #Le resto la diagonal, no me interesa como se relacina una palabra con sigo misma (algo asi como la palabra al cuadrado)
+adj_norm = adj/max(adj) #Noramlizo para que quede todo en escala
+
+adj_norm[1:5,1:7]
+
+```
+
+```{r}
+x_umbrales <- seq(0.1, 0.8, 0.01)
+modularity <- c()
+len_f_g <- c()
+
+for (i in x_umbrales) {
+  h = adj_norm
+  h[h < i] = 0
+  aislados = which(colSums(h)==0)
+  h = h[-aislados,-aislados]
+  ig <- graph.adjacency(h, mode="undirected", weighted=TRUE)
+  lv <- cluster_louvain(ig)
+  modularity[which(x_umbrales %in% i)] <- modularity(lv)
+  len_f_g[which(x_umbrales %in% i)] <- length(lv$names)
+  }
+
+#plot(x_umbrales, modularity, cex = (len_f_g/10))
+#abline(v=0.3, col='red', lty=2)
+
+df_umbrales <- data.frame(x_umbrales, modularity, len_f_g)
+
+h = adj_norm
+h[h < 0.3] = 0 
+aislados = which(colSums(h)==0)
+h = h[-aislados,-aislados]
+nodos = nodos[-aislados,]
+
+
+idx = h > 0
+edges = data.frame(
+  from = row(h)[idx]-1,
+  to = col(h)[idx]-1,
+  weight = h[idx])
+
+edges = edges[edges$from < edges$to,]
+nodos$id = 0:(nrow(nodos)-1)
+
+
+verRed = function(vis.nodes, vis.links){
+  
+  # Para visNetwork
+  # vis.nodes <- nodos
+  # vis.links <- edges
+  
+  vis.nodes$shape  <- "dot"  
+  vis.nodes$shadow <- TRUE # Nodes will drop shadow
+  vis.nodes$title  <- vis.nodes$palabra # Text on click
+  vis.nodes$label  <- vis.nodes$palabra # Node label
+  vis.nodes$size   <- vis.nodes$weight/mean(vis.nodes$weight)*10 # Node size
+  vis.nodes$borderWidth <- 2 # Node border width
+  
+  vis.nodes$color.background <- "gold"
+  vis.nodes$color.border <- "black"
+  vis.nodes$color.highlight.background <- "orange"
+  vis.nodes$color.highlight.border <- "darkred"
+  vis.nodes$font.size <- 20
+  
+  vis.links$width <- vis.links$weight*8 # line width
+  vis.links$color <- "gray"    # line color  
+  # vis.links$arrows <- "middle" # arrows: 'from', 'to', or 'middle'
+  vis.links$smooth <- FALSE    # should the edges be curved?
+  vis.links$shadow <- FALSE    # edge shadow
+  
+  visnet <- visNetwork(vis.nodes, vis.links)
+  visOptions(visnet, highlightNearest = TRUE)
+  print(visnet)
+}
+
+
+```
+
+```{r}
+verRed(nodos, edges)
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
